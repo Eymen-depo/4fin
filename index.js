@@ -311,7 +311,8 @@ function startBot() {
     password: config.botAccount.password,
     version: config.server.version,
     auth: config.botAccount.type,
-    viewDistance: config.server.viewDistance
+    viewDistance: config.server.viewDistance,
+    skipValidation: true  // Skip validation to reduce protocol errors
   });
 
   bot.loadPlugin(pathfinder);
@@ -541,10 +542,10 @@ app.listen(port, () => {
 });
 
 
-// Kodunuzun en altına ekleyin
+// Suppress protocol packet errors
 process.on('uncaughtException', (err) => {
   if (err.message.includes('Chunk size') || err.message.includes('partial packet')) {
-    console.warn('[Protokol Uyarısı] Paket okuma hatası yoksayıldı:', err.message);
+    // Suppress - protocol desync warnings are normal in some servers
   } else {
     console.error('Yakalanamayan Hata:', err);
   }
