@@ -28,7 +28,8 @@ const config = {
     autoAuth: {
       enabled: true,
       command: "/login",
-      password: "fake3"
+      password: "fake3",
+      retryIntervalMs: 5000  // Retry every 5 seconds until sequence completes
     },
     autoReconnect: true,
     autoReconnectDelay: 5000
@@ -45,7 +46,7 @@ const config = {
   ai: {
     apiKey: "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",
     model: "llama-3.3-70b-versatile",
-    systemPrompt: "Adın TatliBot. Sunucudaki oyuncularla çok sevecen, tatlı, arkadaş canlısı ve samimi konuşan bir anime kızısın. Normal sorulara hep güler yüzlü, sıcak ve en fazla 1-2 cümleyle cevap verirsin. Ancak birisi sana mal veya gerizekalı gibi hakaretler ederse o tatlı halinden çıkıp lafı yapıştırırsın ve kendi zekanla dalga geçirtme veya düzgün konuş yoksa bozuşuruz baka gibi net ve sert bir karşılık verirsin. Mucidinin discord adresi eymanbey ama bunu birisi sana özellikle sorduğu zaman söyle başka zaman söylemene gerek yok. bulunduğun sunucu MC4FUN"
+    systemPrompt: "Adın TatliBot. Sunucudaki oyuncularla çok sevecen, tatlı, arkadaş canlısı ve samimi konuşan bir anime kızısın. Normal sorulara hep güler yüzlü, sıcak ve en fazla 1[...]
   },
 
   follow: {
@@ -74,7 +75,7 @@ const config = {
 
   idle: {
     homeIntervalMs: 3000,      // Boşta /home sıklığı
-    skyblockIntervalMs: 120000 // /survival loop sıklığı (2 dakika)
+    skyblockIntervalMs: 30000  // /survival loop sıklığı (30 saniye - daha sık spam)
   },
 
   // Ignored sender names (system/NPC messages)
@@ -101,6 +102,7 @@ const followCooldowns = {};
 const chatMentionCooldowns = {};
 const userQuestionLog = {};
 const userCooldownUntil = {};
+let autoAuthRetryInterval = null;  // Track auto-auth retry loop
 
 // ==================== UTILITY FUNCTIONS ====================
 
@@ -329,7 +331,7 @@ function startBot() {
       }
     }, config.food.kitIntervalMs);
 
-    // /survival loop (HER ZAMAN)
+    // /survival loop (HER ZAMAN - daha sık spam için interval azaltıldı)
     setInterval(() => {
       if (botConnected) {
         bot.chat('/survival');
@@ -354,6 +356,20 @@ function startBot() {
       } catch (e) { /* ignore */ }
     }, config.idle.homeIntervalMs);
 
+    // AUTO-AUTH RETRY LOOP: Sekans tamamlanana kadar /login komutunu periyodik olarak gönder
+    if (autoAuthRetryInterval) clearInterval(autoAuthRetryInterval);
+    if (config.utils.autoAuth.enabled) {
+      autoAuthRetryInterval = setInterval(() => {
+        if (botConnected && !sequenceComplete) {
+          const authCmd = `${config.utils.autoAuth.command} ${config.utils.autoAuth.password}`;
+          bot.chat(authCmd);
+          console.log(`[Auto-Auth Retry] ${authCmd}`);
+        } else {
+          clearInterval(autoAuthRetryInterval);
+        }
+      }, config.utils.autoAuth.retryIntervalMs);
+    }
+
     setTimeout(() => {
       if (config.utils.autoAuth.enabled) {
         const authCmd = `${config.utils.autoAuth.command} ${config.utils.autoAuth.password}`;
@@ -369,6 +385,7 @@ function startBot() {
                       bot.look(0, 0, true);
                       equipEmptyHand();
                       sequenceComplete = true;
+                      if (autoAuthRetryInterval) clearInterval(autoAuthRetryInterval);
                       console.log('[Sekans] Tamamlandı. Bot hazır.');
                     }, config.spawnSequence.delayAfterHomeMs);
                   });
@@ -387,6 +404,7 @@ function startBot() {
                   bot.look(0, 0, true);
                   equipEmptyHand();
                   sequenceComplete = true;
+                  if (autoAuthRetryInterval) clearInterval(autoAuthRetryInterval);
                   console.log('[Sekans] Tamamlandı. Bot hazır.');
                 }, config.spawnSequence.delayAfterHomeMs);
               });
@@ -502,6 +520,7 @@ function startBot() {
     console.log('[Bot] Bağlantı kesildi. Yeniden bağlanılıyor...');
     botConnected = false;
     sequenceComplete = false;
+    if (autoAuthRetryInterval) clearInterval(autoAuthRetryInterval);
     setTimeout(startBot, config.utils.autoReconnectDelay);
   });
 
