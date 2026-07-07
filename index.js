@@ -38,7 +38,7 @@ const config = {
   spawnSequence: {
     delayAfterSpawnMs: 2000,
     delayAfterAuthMs: 3000,
-    delayAfterSkyblockMs: 5000,
+    delayAfterSkyblockMs: 1000,
     delayAfterSpawnCmdMs: 3000,
     delayAfterHomeMs: 2000
   },
@@ -103,6 +103,7 @@ const chatMentionCooldowns = {};
 const userQuestionLog = {};
 const userCooldownUntil = {};
 let autoAuthRetryInterval = null;  // Track auto-auth retry loop
+let loginSequenceActive = false;   // Login sırası sırasında hareket engelli
 
 // ==================== UTILITY FUNCTIONS ====================
 
@@ -179,18 +180,6 @@ async function getAIResponse(userMessage) {
     console.error("[AI] Groq hatası:", error.message);
     return "Şu anda kafam biraz karışık, daha sonra tekrar dener misin?";
   }
-}
-
-function moveAndExecute(command, callback) {
-  bot.setControlState('forward', true);
-  setTimeout(() => {
-    bot.setControlState('forward', false);
-    setTimeout(() => {
-      bot.chat(command);
-      console.log(`[Sekans] ${command}`);
-      if (callback) callback();
-    }, 500);
-  }, 1000);
 }
 
 function equipEmptyHand() {
@@ -317,34 +306,38 @@ function startBot() {
 
   bot.loadPlugin(pathfinder);
   sequenceComplete = false;
+  loginSequenceActive = false;
 
   // ---- Spawn Sequence ----
   bot.once('spawn', () => {
     console.log('[Bot] Bağlandı, giriş sekansı başlıyor...');
     botConnected = true;
+    loginSequenceActive = true;  // Login sırası başladı - hareket engelli
     equipEmptyHand();
 
     // /kit yemek loop
     setInterval(() => {
-      if (botConnected) {
+      if (botConnected && !loginSequenceActive) {
         bot.chat(config.food.kitCommand);
         console.log(`[Yemek] ${config.food.kitCommand}`);
       }
     }, config.food.kitIntervalMs);
 
-    // /survival loop (HER ZAMAN - daha sık spam için interval azaltıldı)
+    // /survival loop (HER ZAMAN - ama login sırasında değil)
     setInterval(() => {
-      if (botConnected) {
+      if (botConnected && !loginSequenceActive) {
         bot.chat('/survival');
       }
     }, config.idle.skyblockIntervalMs);
 
     // Hunger check loop
-    setInterval(() => tryEat(), 10000);
+    setInterval(() => {
+      if (!loginSequenceActive) tryEat();
+    }, 10000);
 
     // Idle /home loop (3 saniye - sadece sekans bittikten sonra ve kimse yakında değilken)
     setInterval(() => {
-      if (!botConnected || !sequenceComplete || isFollowing || !bot.entity) return;
+      if (!botConnected || !sequenceComplete || isFollowing || !bot.entity || loginSequenceActive) return;
       try {
         const nearbyPlayers = Object.values(bot.entities).filter(e =>
           e.type === 'player' &&
@@ -357,71 +350,72 @@ function startBot() {
       } catch (e) { /* ignore */ }
     }, config.idle.homeIntervalMs);
 
-    // AUTO-AUTH RETRY LOOP: Sekans tamamlanana kadar /login komutunu periyodik olarak gönder
+    // AUTO-AUTH RETRY LOOP: Login sırası sırasında /login komutunu periyodik olarak gönder
     if (autoAuthRetryInterval) clearInterval(autoAuthRetryInterval);
     if (config.utils.autoAuth.enabled) {
       autoAuthRetryInterval = setInterval(() => {
-        if (botConnected && !sequenceComplete) {
+        if (botConnected && loginSequenceActive) {
           const authCmd = `${config.utils.autoAuth.command} ${config.utils.autoAuth.password}`;
           bot.chat(authCmd);
           console.log(`[Auto-Auth Retry] ${authCmd}`);
-        } else {
+        } else if (loginSequenceActive === false && autoAuthRetryInterval) {
           clearInterval(autoAuthRetryInterval);
         }
       }, config.utils.autoAuth.retryIntervalMs);
     }
 
+    // LOGIN SEQUENCE: Adım adım komutlar gönder, pathfinder kapalı
     setTimeout(() => {
       if (config.utils.autoAuth.enabled) {
         const authCmd = `${config.utils.autoAuth.command} ${config.utils.autoAuth.password}`;
-        moveAndExecute(authCmd, () => {
+        bot.chat(authCmd);
+        console.log(`[Giriş Sekansı] ${authCmd}`);
+        
+        setTimeout(() => {
+          bot.chat('/survival');
+          console.log('[Giriş Sekansı] /survival');
+          
+          // /survival sonrası 1 saniye bekle, sonra bir adım at
           setTimeout(() => {
-            bot.chat('/survival');
-            console.log('[Sekans] /survival');
+            bot.setControlState('forward', true);
             setTimeout(() => {
-              moveAndExecute('/spawn', () => {
-                setTimeout(() => {
-                  moveAndExecute('/home', () => {
-                    setTimeout(() => {
-                      bot.look(0, 0, true);
-                      equipEmptyHand();
-                      sequenceComplete = true;
-                      if (autoAuthRetryInterval) clearInterval(autoAuthRetryInterval);
-                      console.log('[Sekans] Tamamlandı. Bot hazır.');
-                    }, config.spawnSequence.delayAfterHomeMs);
-                  });
-                }, config.spawnSequence.delayAfterSpawnCmdMs);
-              });
-            }, config.spawnSequence.delayAfterSkyblockMs);
-          }, config.spawnSequence.delayAfterAuthMs);
-        });
+              bot.setControlState('forward', false);
+              console.log('[Giriş Sekansı] Bir adım atıldı');
+              
+              // Pathfinder şimdi açılabilir
+              loginSequenceActive = false;
+              sequenceComplete = true;
+              console.log('[Giriş Sekansı] Tamamlandı. Pathfinder aktif, bot hazır.');
+            }, 500);
+          }, 1000);
+        }, config.spawnSequence.delayAfterAuthMs);
       } else {
         bot.chat('/survival');
+        console.log('[Giriş Sekansı] /survival');
+        
         setTimeout(() => {
-          moveAndExecute('/spawn', () => {
-            setTimeout(() => {
-              moveAndExecute('/home', () => {
-                setTimeout(() => {
-                  bot.look(0, 0, true);
-                  equipEmptyHand();
-                  sequenceComplete = true;
-                  if (autoAuthRetryInterval) clearInterval(autoAuthRetryInterval);
-                  console.log('[Sekans] Tamamlandı. Bot hazır.');
-                }, config.spawnSequence.delayAfterHomeMs);
-              });
-            }, config.spawnSequence.delayAfterSpawnCmdMs);
-          });
+          bot.setControlState('forward', true);
+          setTimeout(() => {
+            bot.setControlState('forward', false);
+            console.log('[Giriş Sekansı] Bir adım atıldı');
+            
+            loginSequenceActive = false;
+            sequenceComplete = true;
+            console.log('[Giriş Sekansı] Tamamlandı. Pathfinder aktif, bot hazır.');
+          }, 500);
         }, config.spawnSequence.delayAfterSkyblockMs);
       }
     }, config.spawnSequence.delayAfterSpawnMs);
   });
 
   // ---- Auto Eat on Health Change ----
-  bot.on('health', () => tryEat());
+  bot.on('health', () => {
+    if (!loginSequenceActive) tryEat();
+  });
 
   // ---- Player Tracking ----
   bot.on('entityMoved', (entity) => {
-    if (!sequenceComplete) return;
+    if (!sequenceComplete || loginSequenceActive) return;
     if (entity.type !== 'player') return;
     if (entity.username === bot.username) return;
     if (isFollowing) return;
@@ -521,6 +515,7 @@ function startBot() {
     console.log('[Bot] Bağlantı kesildi. Yeniden bağlanılıyor...');
     botConnected = false;
     sequenceComplete = false;
+    loginSequenceActive = false;
     if (autoAuthRetryInterval) clearInterval(autoAuthRetryInterval);
     setTimeout(startBot, config.utils.autoReconnectDelay);
   });
