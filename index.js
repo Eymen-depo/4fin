@@ -11,6 +11,7 @@ let sequenceComplete = false;
 // ==================== CONFIGURATION ====================
 const config = {
   debugMode: false,
+  chatLog: true,  // Chat mesajları konsolda göster
 
   botAccount: {
     username: "TatliBot",
@@ -301,7 +302,8 @@ function startBot() {
     version: config.server.version,
     auth: config.botAccount.type,
     viewDistance: config.server.viewDistance,
-    skipValidation: true  // Skip validation to reduce protocol errors
+    skipValidation: true,  // Skip validation to reduce protocol errors
+    physicsEnabled: true   // Fizik sistemini aç
   });
 
   bot.loadPlugin(pathfinder);
@@ -413,6 +415,13 @@ function startBot() {
     if (!loginSequenceActive) tryEat();
   });
 
+  // ---- Knockback / Entity Hurt (Vurulunca savrulması) ----
+  bot.on('entityHurt', (entity) => {
+    if (!entity || entity.id !== bot.entity?.id) return;
+    console.log(`[Fizik] Bot saldırıya uğradı! Knockback uygulanıyor...`);
+    // Knockback fizik motoru tarafından otomatik uygulanır
+  });
+
   // ---- Player Tracking ----
   bot.on('entityMoved', (entity) => {
     if (!sequenceComplete || loginSequenceActive) return;
@@ -463,6 +472,11 @@ function startBot() {
 
   // ---- Message Handler ----
   bot.on('message', async (message) => {
+    const rawMsg = message.toString();
+    if (config.chatLog) {
+      console.log(`[Chat] ${rawMsg}`);
+    }
+
     const parsed = parseIncomingMessage(message);
     if (!parsed || !parsed.sender || !parsed.text) return;
     if (isIgnoredSender(parsed.sender)) return;
