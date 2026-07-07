@@ -520,3 +520,13 @@ app.get('/', (req, res) => {
 app.listen(port, () => {
   console.log(`[Sunucu] Port ${port} üzerinde çalışıyor.`);
 });
+
+
+// Kodunuzun en altına ekleyin
+process.on('uncaughtException', (err) => {
+  if (err.message.includes('Chunk size') || err.message.includes('partial packet')) {
+    console.warn('[Protokol Uyarısı] Paket okuma hatası yoksayıldı:', err.message);
+  } else {
+    console.error('Yakalanamayan Hata:', err);
+  }
+});
