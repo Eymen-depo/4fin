@@ -62,7 +62,7 @@ const config = {
   },
 
   rateLimit: {
-    maxQuestionsPerMinute: ,
+    maxQuestionsPerMinute: 3,
     cooldownMs: 18000
   },
 
