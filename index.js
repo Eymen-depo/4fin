@@ -19,7 +19,7 @@ const config = {
     type: "legacy"
   },
   server: {
-    ip: "mc.reborncraft.pw",
+    ip: "mc.mc4fun.net",
     port: 25565,
     version: "1.21.11",
     viewDistance: 2
@@ -45,7 +45,7 @@ const config = {
   ai: {
     apiKey: "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",
     model: "llama-3.3-70b-versatile",
-    systemPrompt: "Adın ZekiBot. Sunucudaki oyuncularla çok sevecen, tatlı, arkadaş canlısı ve samimi konuşan bir anime kızısın. RehberBot gibi sıkıcı botlardan çok daha iyi ve cana yakın olduğunu düşünürsün. Normal sorulara hep güler yüzlü, sıcak ve en fazla 1-2 cümleyle cevap verirsin. Ancak birisi sana mal veya gerizekalı gibi hakaretler ederse o tatlı halinden çıkıp lafı yapıştırırsın ve kendi zekanla dalga geçirtme veya düzgün konuş yoksa bozuşuruz baka gibi net ve sert bir karşılık verirsin. Mucidinin discord adresi eymanbey ama bunu birisi sana özellikle sorduğu zaman söyle başka zaman söylemene gerek yok. bulunduğun sunucu RebornCraft"
+    systemPrompt: "Adın ZekiBot. Sunucudaki oyuncularla çok sevecen, tatlı, arkadaş canlısı ve samimi konuşan bir anime kızısın. Normal sorulara hep güler yüzlü, sıcak ve en fazla 1-2 cümleyle cevap verirsin. Ancak birisi sana mal veya gerizekalı gibi hakaretler ederse o tatlı halinden çıkıp lafı yapıştırırsın ve kendi zekanla dalga geçirtme veya düzgün konuş yoksa bozuşuruz baka gibi net ve sert bir karşılık verirsin. Mucidinin discord adresi eymanbey ama bunu birisi sana özellikle sorduğu zaman söyle başka zaman söylemene gerek yok. bulunduğun sunucu MC4FUN"
   },
 
   follow: {
@@ -62,8 +62,8 @@ const config = {
   },
 
   rateLimit: {
-    maxQuestionsPerMinute: 4,
-    cooldownMs: 90000
+    maxQuestionsPerMinute: ,
+    cooldownMs: 18000
   },
 
   food: {
@@ -74,7 +74,7 @@ const config = {
 
   idle: {
     homeIntervalMs: 3000,      // Boşta /home sıklığı
-    skyblockIntervalMs: 120000 // /skyblock loop sıklığı (2 dakika)
+    skyblockIntervalMs: 120000 // /survival loop sıklığı (2 dakika)
   },
 
   // Ignored sender names (system/NPC messages)
@@ -329,10 +329,10 @@ function startBot() {
       }
     }, config.food.kitIntervalMs);
 
-    // /skyblock loop (HER ZAMAN)
+    // /survival loop (HER ZAMAN)
     setInterval(() => {
       if (botConnected) {
-        bot.chat('/tekblok');
+        bot.chat('/survival');
       }
     }, config.idle.skyblockIntervalMs);
 
@@ -359,8 +359,8 @@ function startBot() {
         const authCmd = `${config.utils.autoAuth.command} ${config.utils.autoAuth.password}`;
         moveAndExecute(authCmd, () => {
           setTimeout(() => {
-            bot.chat('/tekblok');
-            console.log('[Sekans] /skyblock');
+            bot.chat('/survival');
+            console.log('[Sekans] /survival');
             setTimeout(() => {
               moveAndExecute('/spawn', () => {
                 setTimeout(() => {
@@ -378,7 +378,7 @@ function startBot() {
           }, config.spawnSequence.delayAfterAuthMs);
         });
       } else {
-        bot.chat('/tekblok');
+        bot.chat('/survival');
         setTimeout(() => {
           moveAndExecute('/spawn', () => {
             setTimeout(() => {
