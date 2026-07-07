@@ -21,7 +21,7 @@ const config = {
   server: {
     ip: "mc.mc4fun.net",
     port: 25565,
-    version: "1.21.11",
+    version: "1.21.4",
     viewDistance: 2
   },
   utils: {
