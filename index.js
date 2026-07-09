@@ -1,3 +1,8 @@
+/**
+ * TatliBot - Interactive Minecraft AI Bot
+ * Standalone Node.js script
+ */
+
 const mineflayer = require('mineflayer');
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder');
 const Groq = require('groq-sdk');
@@ -7,11 +12,17 @@ const port = process.env.PORT || 3000;
 
 let botConnected = false;
 let sequenceComplete = false;
+let botReady = false; // "Ready" state after aligning at /home coordinates
+let isFollowing = false;
+let isEating = false;
+let hasSentFirstTimeSkyblockMessage = false;
+let lastCommandOrMessageTime = 0;
 
 // ==================== CONFIGURATION ====================
 const config = {
   debugMode: false,
-  chatLog: true,  // Chat mesajları konsolda göster
+  aggressiveMode: true, // Agresif mod toggle (true/false)
+  pathfinderEnabled: false,
 
   botAccount: {
     username: "TatliBot",
@@ -22,15 +33,14 @@ const config = {
   server: {
     ip: "mc.mc4fun.net",
     port: 25565,
-    version: "1.21.4",
+    version: "1.20.4",
     viewDistance: 2
   },
   utils: {
     autoAuth: {
       enabled: true,
       command: "/login",
-      password: "fake3",
-      retryIntervalMs: 5000  // Retry every 5 seconds until sequence completes
+      password: "fake3"
     },
     autoReconnect: true,
     autoReconnectDelay: 5000
@@ -39,21 +49,25 @@ const config = {
   spawnSequence: {
     delayAfterSpawnMs: 2000,
     delayAfterAuthMs: 3000,
-    delayAfterSkyblockMs: 1000,
+    delayAfterSkyblockMs: 5000,
     delayAfterSpawnCmdMs: 3000,
-    delayAfterHomeMs: 2000
+    delayAfterHomeMs: 2000,
+    
+    // First-time Skyblock message configuration
+    sendFirstTimeSkyblockMessage: true, // Açık/kapalı toggle
+    firstTimeSkyblockMessage: "Merhaba ben bir yapay zekayım, sizinle konuşmak ve arkadaş olmak için buradayım! 😊✨🌸"
   },
 
   ai: {
     apiKey: "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",
     model: "llama-3.3-70b-versatile",
-    systemPrompt: "Adın TatliBot. Sunucudaki oyuncularla çok sevecen, tatlı, arkadaş canlısı ve samimi konuşan bir anime kızısın. Normal sorulara hep güler yüzlü, sıcak ve en fazla 100 kelime cevapla. Argo konuşabilirsin ve mizah yapabilirsin. Cevaplarında emojiler kullanabilirsin. Sunucu bilgisinin yoksa tahmin etme, 'bilmiyorum' cevap ver."
+    systemPrompt: "Adın TatliBot. Sunucudaki oyuncularla çok sevecen, tatlı, arkadaş canlısı ve samimi konuşan bir anime kızısın. RehberBot gibi sıkıcı botlardan çok daha iyi ve cana yakın olduğunu düşünürsün. Normal sorulara hep güler yüzlü, sıcak ve en fazla 1-2 cümleyle cevap verirsin.Uzun cevaplar SAKIN verme. Her zaman kısa cevaplar ver. Ancak birisi sana mal veya gerizekalı gibi hakaretler ederse o tatlı halinden çıkıp lafı yapıştırırsın ve kendi zekanla dalga geçirtme veya düzgün konuş yoksa bozuşuruz baka gibi net ve sert bir karşılık verirsin. Mucinidin discord adresi EymanBey ama bunu birisi sana özellikle sorduğu zaman söyle başka zaman söylemene gerek yok. bulunduğun sunucu bir Minecraft sunucusu olan MC4FUN. İngilizce SAKIN konuşma!"
   },
 
   follow: {
-    maxDistance: 5,
-    durationMs: 5000,
-    cooldownMs: 30000,
+    maxDistance: 5,         // Hazırken birinin 5 blok yanına gelmesi lazım tetiklenmek için
+    durationMs: 5000,       // Takip süresi (5 saniye)
+    cooldownMs: 30000,      // Takip bekleme süresi
     messageCommand: "/msg",
     followMessage: "Merhaba {username}! Benimle konuşmak için {msgCommand} {botname} [mesaj] yazabilirsin!"
   },
@@ -64,8 +78,14 @@ const config = {
   },
 
   rateLimit: {
-    maxQuestionsPerMinute: 3,
-    cooldownMs: 18000
+    maxQuestionsPerMinute: 4,
+    cooldownMs: 90000
+  },
+
+  // Agresif Mod Kota Ayarları (2 dakikada bir 2 mesaj)
+  aggressiveLimits: {
+    maxMessages: 2,
+    windowMs: 120000 // 2 dakika
   },
 
   food: {
@@ -74,9 +94,10 @@ const config = {
     eatBelowHunger: 18
   },
 
-  idle: {
-    homeIntervalMs: 3000,      // Boşta /home sıklığı
-    skyblockIntervalMs: 30000  // /survival loop sıklığı (30 saniye - daha sık spam)
+  homeCoordinates: {
+    x: 17.5,
+    y: 80.0,
+    z: -225.5
   },
 
   // Ignored sender names (system/NPC messages)
@@ -97,14 +118,29 @@ const FOOD_ITEMS = [
 // ==================== GLOBALS ====================
 const groq = new Groq({ apiKey: config.ai.apiKey });
 let bot;
-let isFollowing = false;
-let isEating = false;
 const followCooldowns = {};
 const chatMentionCooldowns = {};
-const userQuestionLog = {};
-const userCooldownUntil = {};
-let autoAuthRetryInterval = null;  // Track auto-auth retry loop
-let loginSequenceActive = false;   // Login sırası sırasında hareket engelli
+const userMessageTimes = {};
+
+// Clean memory-friendly Chat logs
+const chatLogs = [];
+function addChatLog(type, sender, text) {
+  const logEntry = {
+    id: Math.random().toString(36).substring(2, 9),
+    timestamp: new Date().toLocaleTimeString('tr-TR'),
+    type, // 'chat', 'whisper', 'mention', 'system', 'bot_action'
+    sender,
+    text
+  };
+  chatLogs.push(logEntry);
+  if (chatLogs.length > 200) chatLogs.shift();
+  
+  // Clean console log print
+  console.log(`[${logEntry.timestamp}] [${type.toUpperCase()}] ${sender ? sender + ': ' : ''}${text}`);
+}
+
+// Aggressive Mode quota tracking: { username: [timestamp1, timestamp2, ...] }
+const aggressiveQuotas = {};
 
 // ==================== UTILITY FUNCTIONS ====================
 
@@ -146,24 +182,37 @@ function isIgnoredSender(name) {
   return lower === botUser || lower === botName || config.ignoredSenders.includes(lower);
 }
 
-function checkRateLimit(username) {
+function checkUnifiedRateLimit(username) {
+  const lowerUser = username.toLowerCase();
+  if (lowerUser === 'eymanbey') {
+    return { allowed: true };
+  }
   const now = Date.now();
-  if (userCooldownUntil[username] && now < userCooldownUntil[username]) {
-    return formatDuration(userCooldownUntil[username] - now);
+  if (!userMessageTimes[username]) {
+    userMessageTimes[username] = [];
   }
-  if (userCooldownUntil[username]) {
-    delete userCooldownUntil[username];
-    userQuestionLog[username] = [];
+  userMessageTimes[username] = userMessageTimes[username].filter(ts => now - ts < 120000);
+
+  if (userMessageTimes[username].length >= 2) {
+    const oldestTs = userMessageTimes[username][0];
+    const remainingMs = (oldestTs + 120000) - now;
+    return {
+      allowed: false,
+      waitTimeStr: formatDuration(remainingMs)
+    };
   }
-  if (!userQuestionLog[username]) userQuestionLog[username] = [];
-  userQuestionLog[username] = userQuestionLog[username].filter(ts => now - ts < 60000);
-  if (userQuestionLog[username].length >= config.rateLimit.maxQuestionsPerMinute) {
-    userCooldownUntil[username] = now + config.rateLimit.cooldownMs;
-    userQuestionLog[username] = [];
-    return formatDuration(config.rateLimit.cooldownMs);
+
+  return { allowed: true };
+}
+
+function consumeUnifiedRateLimit(username) {
+  const lowerUser = username.toLowerCase();
+  if (lowerUser === 'eymanbey') return;
+  const now = Date.now();
+  if (!userMessageTimes[username]) {
+    userMessageTimes[username] = [];
   }
-  userQuestionLog[username].push(now);
-  return null;
+  userMessageTimes[username].push(now);
 }
 
 async function getAIResponse(userMessage) {
@@ -181,6 +230,18 @@ async function getAIResponse(userMessage) {
     console.error("[AI] Groq hatası:", error.message);
     return "Şu anda kafam biraz karışık, daha sonra tekrar dener misin?";
   }
+}
+
+function moveAndExecute(command, callback) {
+  bot.setControlState('forward', true);
+  setTimeout(() => {
+    bot.setControlState('forward', false);
+    setTimeout(() => {
+      bot.chat(command);
+      addChatLog('system', null, `Komut gönderildi: ${command}`);
+      if (callback) callback();
+    }, 500);
+  }, 1000);
 }
 
 function equipEmptyHand() {
@@ -203,15 +264,57 @@ async function tryEat() {
     await new Promise((resolve, reject) => {
       bot.consume((err) => { if (err) reject(err); else resolve(); });
     });
-    console.log(`[Yemek] ${foodItem.displayName || foodItem.name} yendi.`);
+    addChatLog('system', null, `Yemek yenildi: ${foodItem.displayName || foodItem.name}`);
   } catch (err) { /* ignore */ }
   isEating = false;
   equipEmptyHand();
 }
 
+// Go to X: 17.5, Y: 80.0, Z: -225.5 and align orientation
+async function goToHomeCoordinates() {
+  if (!bot || !bot.entity) return;
+  botReady = false;
+  addChatLog('system', null, `Eve dönülüyor (/home komutu gönderiliyor)...`);
+  try {
+    bot.pathfinder.setGoal(null);
+  } catch (e) { /* ignore */ }
+  bot.chat('/home');
+  setTimeout(() => {
+    if (!bot) return;
+    botReady = true;
+    isFollowing = false;
+  }, 1000);
+}
+
 // ==================== MESSAGE PARSER ====================
 function parseIncomingMessage(message) {
   const json = message.json;
+  const fullText = extractComponentText(json || message).replace(/§[0-9a-fk-or]/gi, '').trim();
+  if (!fullText) return null;
+
+  let match;
+
+  // --- New MSG (Whisper) Format: [Chat] ✉⬇ MSG (EymanBey ➺ TatliBot)naber ---
+  match = fullText.match(/\(\s*(\w+)\s*(?:➺|➔|->|→)\s*TatliBot\s*\)\s*(.*)/i);
+  if (match && match[2].trim()) {
+    return { type: 'whisper', sender: match[1].trim(), text: match[2].trim() };
+  }
+
+  // General Public Chat with ▸ format (e.g. "0   Göçebe ◈ EymanBey ▸ @TatliBot naber?")
+  match = fullText.match(/(?:.*?\s+)?(\w+)\s*▸\s*(.*)/);
+  if (match && match[2].trim()) {
+    const s = match[1].toLowerCase();
+    if (s !== 'msg' && !config.ignoredSenders.includes(s)) {
+      const text = match[2].trim();
+      const botName = config.botAccount.displayName.toLowerCase();
+      const isMention = text.toLowerCase().includes(botName) || text.toLowerCase().includes('@' + botName);
+      return { 
+        type: isMention ? 'mention' : 'chat', 
+        sender: match[1].trim(), 
+        text 
+      };
+    }
+  }
 
   // --- Method 1: Vanilla translate-based packets ---
   if (json && json.translate) {
@@ -228,50 +331,49 @@ function parseIncomingMessage(message) {
   }
 
   // --- Method 2: Custom server (recursive text extraction + regex) ---
-  if (json) {
-    const fullText = extractComponentText(json);
-    if (!fullText || fullText.trim().length === 0) return null;
+  // Whisper: [MSG...] [Sender ➺/➔/-> Receiver] »/>> message
+  match = fullText.match(/\[MSG[^\]]*\]\s*\[(\w+)\s*(?:➺|➔|->|→)\s*(?:\w+)\]\s*(?:»|>>)\s*(.*)/i);
+  if (match && match[2].trim()) return { type: 'whisper', sender: match[1].trim(), text: match[2].trim() };
 
-    let match;
+  // Whisper: [Sender ➺/-> Receiver] message
+  match = fullText.match(/\[(\w+)\s*(?:➺|➔|->|→)\s*(?:Ben|You)\]\s*(?:»|>>)?\s*(.*)/i);
+  if (match && match[2].trim()) return { type: 'whisper', sender: match[1].trim(), text: match[2].trim() };
 
-    // Whisper: [MSG...] [Sender ➺/➔/-> Receiver] »/>> message
-    match = fullText.match(/\[MSG[^\]]*\]\s*\[(\w+)\s*(?:➺|➔|->|→)\s*(?:\w+)\]\s*(?:»|>>)\s*(.*)/i);
-    if (match && match[2].trim()) return { type: 'whisper', sender: match[1].trim(), text: match[2].trim() };
+  // Whisper: Sender whispers to you: message
+  match = fullText.match(/(\w+)\s*whispers?\s*to\s*you\s*:\s*(.*)/i);
+  if (match && match[2].trim()) return { type: 'whisper', sender: match[1].trim(), text: match[2].trim() };
 
-    // Whisper: [Sender ➺/-> Receiver] message
-    match = fullText.match(/\[(\w+)\s*(?:➺|➔|->|→)\s*(?:Ben|You)\]\s*(?:»|>>)?\s*(.*)/i);
-    if (match && match[2].trim()) return { type: 'whisper', sender: match[1].trim(), text: match[2].trim() };
+  // Whisper: Turkish formats
+  match = fullText.match(/(\w+)\s*(?:size\s*)?fısıldıyor\s*:\s*(.*)/i) ||
+          fullText.match(/(\w+)\s*fısıldadı\s*:\s*(.*)/i);
+  if (match && match[2].trim()) return { type: 'whisper', sender: match[1].trim(), text: match[2].trim() };
 
-    // Whisper: Sender whispers to you: message
-    match = fullText.match(/(\w+)\s*whispers?\s*to\s*you\s*:\s*(.*)/i);
-    if (match && match[2].trim()) return { type: 'whisper', sender: match[1].trim(), text: match[2].trim() };
-
-    // Whisper: Turkish formats
-    match = fullText.match(/(\w+)\s*(?:size\s*)?fısıldıyor\s*:\s*(.*)/i) ||
-            fullText.match(/(\w+)\s*fısıldadı\s*:\s*(.*)/i);
-    if (match && match[2].trim()) return { type: 'whisper', sender: match[1].trim(), text: match[2].trim() };
-
-    // Public chat: "... Username >> message" format (RebornCraft style)
-    match = fullText.match(/(\w+)\s*(?:>>|»)\s+(.*)/);
-    if (match && match[2].trim()) {
-      const s = match[1].toLowerCase();
-      // Make sure it's not a whisper remnant (MSG prefix already handled above)
-      if (s !== 'msg' && s !== 'ben' && s !== 'you') {
-        return { type: 'chat', sender: match[1].trim(), text: match[2].trim() };
-      }
+  // Public chat: "... Username >> message" format (RebornCraft style)
+  match = fullText.match(/(\w+)\s*(?:>>|»)\s+(.*)/);
+  if (match && match[2].trim()) {
+    const s = match[1].toLowerCase();
+    if (s !== 'msg' && s !== 'ben' && s !== 'you') {
+      return { type: 'chat', sender: match[1].trim(), text: match[2].trim() };
     }
+  }
 
-    // Public chat: <Sender> message
-    match = fullText.match(/<(\w+)>\s*(.*)/);
-    if (match && match[2].trim()) return { type: 'chat', sender: match[1].trim(), text: match[2].trim() };
+  // Public chat: <Sender> message
+  match = fullText.match(/• <(\w+)>\s*(.*)/);
+  if (match && match[2].trim()) return { type: 'chat', sender: match[1].trim(), text: match[2].trim() };
 
-    // Public chat: [Prefix] Sender: message
-    match = fullText.match(/(?:\[.*?\]\s*)?(\w+)\s*:\s*(.*)/);
-    if (match && match[2].trim()) {
-      const s = match[1].toLowerCase();
-      if (s !== 'msg' && !config.ignoredSenders.includes(s)) {
-        return { type: 'chat', sender: match[1].trim(), text: match[2].trim() };
-      }
+  // Public chat: [Prefix] Sender: message
+  match = fullText.match(/(?:\[.*?\]\s*)?(\w+)\s*:\s*(.*)/);
+  if (match && match[2].trim()) {
+    const s = match[1].toLowerCase();
+    if (s !== 'msg' && !config.ignoredSenders.includes(s)) {
+      const text = match[2].trim();
+      const botName = config.botAccount.displayName.toLowerCase();
+      const isMention = text.toLowerCase().includes(botName) || text.toLowerCase().includes('@' + botName);
+      return { 
+        type: isMention ? 'mention' : 'chat', 
+        sender: match[1].trim(), 
+        text 
+      };
     }
   }
 
@@ -279,7 +381,6 @@ function parseIncomingMessage(message) {
   const rawText = message.toString().replace(/§[0-9a-fk-or]/gi, '').trim();
   if (!rawText) return null;
 
-  let match;
   match = rawText.match(/(\w+)\s*whispers?\s*to\s*you\s*:\s*(.*)/i);
   if (match && match[2].trim()) return { type: 'whisper', sender: match[1].trim(), text: match[2].trim() };
 
@@ -301,214 +402,259 @@ function startBot() {
     password: config.botAccount.password,
     version: config.server.version,
     auth: config.botAccount.type,
-    viewDistance: config.server.viewDistance,
-    skipValidation: true,  // Skip validation to reduce protocol errors
-    physicsEnabled: true   // Fizik sistemini aç
+    viewDistance: config.server.viewDistance
+  });
+
+  // Intercept bot.chat to set lastCommandOrMessageTime
+  bot.once('spawn', () => {
+    if (bot && typeof bot.chat === 'function') {
+      const originalChat = bot.chat.bind(bot);
+      bot.chat = (message) => {
+        lastCommandOrMessageTime = Date.now();
+        originalChat(message);
+      };
+    }
   });
 
   bot.loadPlugin(pathfinder);
   sequenceComplete = false;
-  loginSequenceActive = false;
+  botReady = false;
 
   // ---- Spawn Sequence ----
   bot.once('spawn', () => {
-    console.log('[Bot] Bağlandı, giriş sekansı başlıyor...');
+    addChatLog('system', null, 'Bağlandı, giriş sekansı başlıyor...');
     botConnected = true;
-    loginSequenceActive = true;  // Login sırası başladı - hareket engelli
     equipEmptyHand();
 
-    // /kit yemek loop
-    setInterval(() => {
-      if (botConnected && !loginSequenceActive) {
+    // /kit yemek loop (5 dakikada bir)
+    const kitInterval = setInterval(() => {
+      if (botConnected) {
         bot.chat(config.food.kitCommand);
-        console.log(`[Yemek] ${config.food.kitCommand}`);
+        addChatLog('system', null, `Yemek kiti istendi: ${config.food.kitCommand}`);
       }
     }, config.food.kitIntervalMs);
 
-    // /survival loop (HER ZAMAN - ama login sırasında değil)
-    setInterval(() => {
-      if (botConnected && !loginSequenceActive) {
-        bot.chat('/survival');
+    // Staggered periodic commands loop (login & skyblock periyodik olarak her 10 saniyede bir, sırayla)
+    let staggeredTick = 0;
+    const staggeredInterval = setInterval(() => {
+      if (!botConnected) return;
+      
+      if (staggeredTick % 2 === 0) {
+        // Even ticks: /login komutu gönder
+        const loginCmd = `${config.utils.autoAuth.command} ${config.utils.autoAuth.password}`;
+        bot.chat(loginCmd);
+        addChatLog('system', null, `Periyodik Otomatik Giriş: /login *****`);
+      } else {
+        // Odd ticks: /skyblock (veya skyblock) komutu gönder
+        bot.chat('/skyblock');
+        addChatLog('system', null, `Periyodik Skyblock Giriş: /skyblock`);
       }
-    }, config.idle.skyblockIntervalMs);
+      staggeredTick++;
+    }, 10000); // 10 saniyede bir staggering
 
     // Hunger check loop
-    setInterval(() => {
-      if (!loginSequenceActive) tryEat();
-    }, 10000);
+    const hungerInterval = setInterval(() => tryEat(), 10000);
 
-    // Idle /home loop (3 saniye - sadece sekans bittikten sonra ve kimse yakında değilken)
-    setInterval(() => {
-      if (!botConnected || !sequenceComplete || isFollowing || !bot.entity || loginSequenceActive) return;
-      try {
-        const nearbyPlayers = Object.values(bot.entities).filter(e =>
-          e.type === 'player' &&
-          e.username !== bot.username &&
-          bot.entity.position.distanceTo(e.position) <= config.follow.maxDistance
-        );
-        if (nearbyPlayers.length === 0) {
-          bot.chat('/home');
-        }
-      } catch (e) { /* ignore */ }
-    }, config.idle.homeIntervalMs);
+    const homeCheckInterval = setInterval(() => {
+      if (!botConnected || !bot || !bot.entity || !sequenceComplete) return;
+      if (Date.now() - lastCommandOrMessageTime < 3000) return;
 
-    // AUTO-AUTH RETRY LOOP: Login sırası sırasında /login komutunu periyodik olarak gönder
-    if (autoAuthRetryInterval) clearInterval(autoAuthRetryInterval);
-    if (config.utils.autoAuth.enabled) {
-      autoAuthRetryInterval = setInterval(() => {
-        if (botConnected && loginSequenceActive) {
-          const authCmd = `${config.utils.autoAuth.command} ${config.utils.autoAuth.password}`;
-          bot.chat(authCmd);
-          console.log(`[Auto-Auth Retry] ${authCmd}`);
-        } else if (loginSequenceActive === false && autoAuthRetryInterval) {
-          clearInterval(autoAuthRetryInterval);
-        }
-      }, config.utils.autoAuth.retryIntervalMs);
-    }
+      const nearbyPlayers = Object.values(bot.entities).filter(ent => 
+        ent.type === 'player' && 
+        ent.username !== bot.username &&
+        bot.entity.position.distanceTo(ent.position) < 12
+      );
 
-    // LOGIN SEQUENCE: Adım adım komutlar gönder, pathfinder kapalı
+      if (nearbyPlayers.length === 0) {
+        bot.chat('/home');
+        addChatLog('bot_action', null, 'Yakında kimse yok, otomatik /home yazıldı.');
+      }
+    }, 5000);
+
+    // Initial sequence steps
     setTimeout(() => {
       if (config.utils.autoAuth.enabled) {
         const authCmd = `${config.utils.autoAuth.command} ${config.utils.autoAuth.password}`;
-        bot.chat(authCmd);
-        console.log(`[Giriş Sekansı] ${authCmd}`);
-        
-        setTimeout(() => {
-          bot.chat('/survival');
-          console.log('[Giriş Sekansı] /survival');
-          
-          // /survival sonrası 1 saniye bekle, sonra bir adım at
+        moveAndExecute(authCmd, () => {
           setTimeout(() => {
-            bot.setControlState('forward', true);
-            setTimeout(() => {
-              bot.setControlState('forward', false);
-              console.log('[Giriş Sekansı] Bir adım atıldı');
-              
-              // Pathfinder şimdi açılabilir
-              loginSequenceActive = false;
-              sequenceComplete = true;
-              console.log('[Giriş Sekansı] Tamamlandı. Pathfinder aktif, bot hazır.');
-            }, 500);
-          }, 1000);
-        }, config.spawnSequence.delayAfterAuthMs);
-      } else {
-        bot.chat('/survival');
-        console.log('[Giriş Sekansı] /survival');
-        
-        setTimeout(() => {
-          bot.setControlState('forward', true);
-          setTimeout(() => {
-            bot.setControlState('forward', false);
-            console.log('[Giriş Sekansı] Bir adım atıldı');
+            bot.chat('/skyblock');
+            addChatLog('system', null, 'Sekans: /skyblock gönderildi');
             
-            loginSequenceActive = false;
-            sequenceComplete = true;
-            console.log('[Giriş Sekansı] Tamamlandı. Pathfinder aktif, bot hazır.');
-          }, 500);
+            setTimeout(() => {
+              moveAndExecute('/spawn', () => {
+                setTimeout(() => {
+                  // After /spawn command, execute goToHomeCoordinates which teleports /home and paths to coordinate
+                  goToHomeCoordinates().then(() => {
+                    sequenceComplete = true;
+                    addChatLog('system', null, 'Sekans tamamlandı. Bot hazır.');
+
+                    // Send first-time skyblock/skyblock announcement if enabled & not yet sent
+                    if (config.spawnSequence.sendFirstTimeSkyblockMessage && !hasSentFirstTimeSkyblockMessage) {
+                      setTimeout(() => {
+                        bot.chat(config.spawnSequence.firstTimeSkyblockMessage);
+                        addChatLog('bot_action', null, `İlk Giriş Mesajı Yayınlandı: "${config.spawnSequence.firstTimeSkyblockMessage}"`);
+                        hasSentFirstTimeSkyblockMessage = true;
+                      }, 2000);
+                    }
+                  });
+                }, config.spawnSequence.delayAfterSpawnCmdMs);
+              });
+            }, config.spawnSequence.delayAfterSkyblockMs);
+          }, config.spawnSequence.delayAfterAuthMs);
+        });
+      } else {
+        bot.chat('/skyblock');
+        setTimeout(() => {
+          moveAndExecute('/spawn', () => {
+            setTimeout(() => {
+              goToHomeCoordinates().then(() => {
+                sequenceComplete = true;
+                addChatLog('system', null, 'Sekans tamamlandı. Bot hazır.');
+
+                if (config.spawnSequence.sendFirstTimeSkyblockMessage && !hasSentFirstTimeSkyblockMessage) {
+                  setTimeout(() => {
+                    bot.chat(config.spawnSequence.firstTimeSkyblockMessage);
+                    addChatLog('bot_action', null, `İlk Giriş Mesajı Yayınlandı: "${config.spawnSequence.firstTimeSkyblockMessage}"`);
+                    hasSentFirstTimeSkyblockMessage = true;
+                  }, 2000);
+                }
+              });
+            }, config.spawnSequence.delayAfterSpawnCmdMs);
+          });
         }, config.spawnSequence.delayAfterSkyblockMs);
       }
     }, config.spawnSequence.delayAfterSpawnMs);
+
+    // Cleanup intervals on end
+    bot.once('end', () => {
+      clearInterval(kitInterval);
+      clearInterval(staggeredInterval);
+      clearInterval(hungerInterval);
+      clearInterval(homeCheckInterval);
+    });
   });
 
   // ---- Auto Eat on Health Change ----
-  bot.on('health', () => {
-    if (!loginSequenceActive) tryEat();
-  });
+  bot.on('health', () => tryEat());
 
-  // ---- Knockback / Entity Hurt (Vurulunca savrulması) ----
-  bot.on('entityHurt', (entity) => {
-    if (!entity || entity.id !== bot.entity?.id) return;
-    console.log(`[Fizik] Bot saldırıya uğradı! Knockback uygulanıyor...`);
-    // Knockback fizik motoru tarafından otomatik uygulanır
-  });
-
-  // ---- Player Tracking ----
+  // ---- Player Proximity and Tracking (Only when bot is ready and home coordinates are reached) ----
   bot.on('entityMoved', (entity) => {
-    if (!sequenceComplete || loginSequenceActive) return;
+    if (!config.pathfinderEnabled) return;
+    if (!sequenceComplete || !botReady) return;
     if (entity.type !== 'player') return;
     if (entity.username === bot.username) return;
     if (isFollowing) return;
 
     const dist = bot.entity.position.distanceTo(entity.position);
-    if (dist > config.follow.maxDistance) return;
+    if (dist > 32) return; // 2 chunks maximum distance limit
+    if (dist > config.follow.maxDistance) return; // Must be within 5 blocks
 
     const now = Date.now();
     const lastFollowed = followCooldowns[entity.username] || 0;
     if (now - lastFollowed < config.follow.cooldownMs) return;
 
+    if (now - lastCommandOrMessageTime < 3000) return;
+
     isFollowing = true;
-    console.log(`[Takip] ${entity.username} (${config.follow.durationMs / 1000}s)...`);
+    botReady = false;
+    addChatLog('bot_action', null, `${entity.username} takip ediliyor (Süre: ${config.follow.durationMs / 1000}sn)...`);
 
     const defaultMove = new Movements(bot);
     bot.pathfinder.setMovements(defaultMove);
+    
+    // Set goal once; mineflayer-pathfinder dynamically tracks the entity by reference.
+    // This resolves the laggy/stuttering recalculations.
     bot.pathfinder.setGoal(new goals.GoalFollow(entity, 1));
 
-    const updateInterval = setInterval(() => {
-      try {
-        const target = bot.nearestEntity(ent => ent.username === entity.username);
-        if (target) bot.pathfinder.setGoal(new goals.GoalFollow(target, 1));
-      } catch (e) { /* ignore */ }
-    }, 500);
-
     setTimeout(() => {
-      clearInterval(updateInterval);
       try { bot.pathfinder.setGoal(null); } catch (e) { /* ignore */ }
       followCooldowns[entity.username] = Date.now();
-      console.log(`[Takip] ${entity.username} bitti.`);
+      addChatLog('bot_action', null, `${entity.username} takibi tamamlandı.`);
 
-      bot.chat('/home');
+      // Send greeting command to players
+      const dm = config.follow.followMessage
+        .replace('{username}', entity.username)
+        .replace('{msgCommand}', config.follow.messageCommand)
+        .replace('{botname}', config.botAccount.displayName);
+      
+      bot.chat(`${config.follow.messageCommand} ${entity.username} ${dm}`);
+      addChatLog('bot_reply_private', entity.username, dm);
+
+      equipEmptyHand();
+      
+      // Return back to /home and align
       setTimeout(() => {
-        bot.look(0, 0, true);
-        const dm = config.follow.followMessage
-          .replace('{username}', entity.username)
-          .replace('{msgCommand}', config.follow.messageCommand)
-          .replace('{botname}', config.botAccount.displayName);
-        bot.chat(`${config.follow.messageCommand} ${entity.username} ${dm}`);
-        equipEmptyHand();
-        isFollowing = false;
+        goToHomeCoordinates();
       }, 500);
     }, config.follow.durationMs);
   });
 
   // ---- Message Handler ----
   bot.on('message', async (message) => {
-    const rawMsg = message.toString();
-    if (config.chatLog) {
-      console.log(`[Chat] ${rawMsg}`);
-    }
-
+    if (!bot) return;
     const parsed = parseIncomingMessage(message);
-    if (!parsed || !parsed.sender || !parsed.text) return;
-    if (isIgnoredSender(parsed.sender)) return;
-
-    // ---- WHISPER ----
-    if (parsed.type === 'whisper') {
-      console.log(`[Whisper] ${parsed.sender}: ${parsed.text}`);
-
-      const rateLimited = checkRateLimit(parsed.sender);
-      if (rateLimited) {
-        bot.chat(`${config.follow.messageCommand} ${parsed.sender} Bana tekrar soru sormak için ${rateLimited} beklemen gerekiyor.`);
-        console.log(`[Limit] ${parsed.sender} (${rateLimited})`);
-        return;
+    
+    // Fallback: log raw unparsed messages so they appear in the chatlog
+    if (!parsed) {
+      const rawText = message.toString().replace(/§[0-9a-fk-or]/gi, '').trim();
+      if (rawText) {
+        addChatLog('chat', null, rawText);
       }
-
-      const aiResponse = await getAIResponse(parsed.text);
-      bot.chat(`${config.follow.messageCommand} ${parsed.sender} ${aiResponse}`);
-      console.log(`[AI] ${parsed.sender} -> "${parsed.text}" => "${aiResponse}"`);
       return;
     }
 
-    // ---- PUBLIC CHAT ----
-    if (parsed.type === 'chat') {
-      if (config.debugMode) {
-        const aiResponse = await getAIResponse(parsed.text);
-        bot.chat(aiResponse);
-        console.log(`[Debug] ${parsed.sender}: "${parsed.text}" => "${aiResponse}"`);
+    if (!parsed.sender || !parsed.text) return;
+    if (isIgnoredSender(parsed.sender)) return;
+
+    // Log the clean message
+    addChatLog(parsed.type, parsed.sender, parsed.text);
+
+    // If Pathfinder / AI is disabled, we do not respond or process any AI logic.
+    if (!config.pathfinderEnabled) return;
+
+    // ---- WHISPER (Özel Mesaj) ----
+    if (parsed.type === 'whisper') {
+      const rateLimitCheck = checkUnifiedRateLimit(parsed.sender);
+      if (!rateLimitCheck.allowed) {
+        const warning = `Mesaj hakkınız doldu! Yeni hak kazanmak için ${rateLimitCheck.waitTimeStr} beklemelisiniz. 😊`;
+        bot.chat(`${config.follow.messageCommand} ${parsed.sender} ${warning}`);
+        addChatLog('bot_reply_private', parsed.sender, warning);
         return;
       }
 
-      const botName = config.botAccount.displayName.toLowerCase();
-      if (parsed.text.toLowerCase().includes(botName)) {
+      consumeUnifiedRateLimit(parsed.sender);
+      const aiResponse = await getAIResponse(parsed.text);
+      bot.chat(`${config.follow.messageCommand} ${parsed.sender} ${aiResponse}`);
+      addChatLog('bot_reply_private', parsed.sender, aiResponse);
+      return;
+    }
+
+    // ---- MENTION (Adının Anılması) ----
+    if (parsed.type === 'mention' || parsed.type === 'chat') {
+      const containsMention = parsed.text.toLowerCase().includes(config.botAccount.displayName.toLowerCase()) || 
+                             parsed.text.toLowerCase().includes('@' + config.botAccount.displayName.toLowerCase());
+      
+      if (!containsMention) return;
+
+      // Check if aggressive mode is active
+      if (config.aggressiveMode) {
+        // Agresif Moddayken:
+        const rateLimitCheck = checkUnifiedRateLimit(parsed.sender);
+        if (!rateLimitCheck.allowed) {
+          const warning = `Mesaj hakkınız doldu! Yeni hak kazanmak için ${rateLimitCheck.waitTimeStr} beklemelisiniz. 😊`;
+          bot.chat(`${config.follow.messageCommand} ${parsed.sender} ${warning}`);
+          addChatLog('bot_reply_private', parsed.sender, warning);
+          return;
+        }
+
+        consumeUnifiedRateLimit(parsed.sender);
+        const aiResponse = await getAIResponse(parsed.text);
+        // Removed "@" character from mention response as requested
+        const formattedResponse = `${parsed.sender} ${aiResponse}`;
+        bot.chat(formattedResponse);
+        addChatLog('bot_reply_public', parsed.sender, aiResponse);
+      } else {
+        // Normal Moddayken (Fısıltı komutuna yönlendirir):
         const now = Date.now();
         const lastMention = chatMentionCooldowns[parsed.sender] || 0;
         if (now - lastMention < config.chatMention.cooldownMs) return;
@@ -519,43 +665,108 @@ function startBot() {
           .replace('{botname}', config.botAccount.displayName);
 
         bot.chat(`${config.follow.messageCommand} ${parsed.sender} ${responseText}`);
-        console.log(`[Chat] ${parsed.sender} ismi andı.`);
+        addChatLog('bot_reply_private', parsed.sender, responseText);
       }
     }
   });
 
   // ---- Disconnect & Reconnect ----
   bot.on('end', () => {
-    console.log('[Bot] Bağlantı kesildi. Yeniden bağlanılıyor...');
+    addChatLog('system', null, 'Bağlantı kesildi. Yeniden bağlanılıyor...');
     botConnected = false;
     sequenceComplete = false;
-    loginSequenceActive = false;
-    if (autoAuthRetryInterval) clearInterval(autoAuthRetryInterval);
+    botReady = false;
+    isFollowing = false;
     setTimeout(startBot, config.utils.autoReconnectDelay);
   });
 
   bot.on('error', (err) => {
     console.error('[Bot] Hata:', err.message);
+    addChatLog('system', null, `Bot Hata: ${err.message}`);
   });
 }
 
 // ==================== START ====================
 startBot();
 
+app.use(express.json());
+
+app.get('/api/status', (req, res) => {
+  res.json({
+    connected: botConnected,
+    sequenceComplete,
+    botReady,
+    isFollowing,
+    isEating,
+    hasSentFirstTimeSkyblockMessage,
+    config: {
+      aggressiveMode: config.aggressiveMode,
+      pathfinderEnabled: config.pathfinderEnabled,
+      firstTimeSkyblockToggle: config.spawnSequence.sendFirstTimeSkyblockMessage,
+      server: config.server,
+      botAccount: {
+        username: config.botAccount.username,
+        displayName: config.botAccount.displayName
+      }
+    }
+  });
+});
+
+app.get('/api/logs', (req, res) => {
+  res.json(chatLogs);
+});
+
+app.post('/api/config/toggle-aggressive', (req, res) => {
+  config.aggressiveMode = !config.aggressiveMode;
+  addChatLog('system', null, `Agresif mod ${config.aggressiveMode ? 'AÇILDI' : 'KAPATILDI'}`);
+  res.json({ success: true, aggressiveMode: config.aggressiveMode });
+});
+
+app.post('/api/config/toggle-pathfinder', (req, res) => {
+  config.pathfinderEnabled = !config.pathfinderEnabled;
+  addChatLog('system', null, `Yapay zeka (Pathfinder) mod ${config.pathfinderEnabled ? 'AÇILDI' : 'KAPATILDI'}`);
+  res.json({ success: true, pathfinderEnabled: config.pathfinderEnabled });
+});
+
+app.post('/api/config/toggle-skyblock-msg', (req, res) => {
+  config.spawnSequence.sendFirstTimeSkyblockMessage = !config.spawnSequence.sendFirstTimeSkyblockMessage;
+  addChatLog('system', null, `İlk giriş skyblock duyurusu ${config.spawnSequence.sendFirstTimeSkyblockMessage ? 'AÇILDI' : 'KAPATILDI'}`);
+  res.json({ success: true, toggle: config.spawnSequence.sendFirstTimeSkyblockMessage });
+});
+
+app.post('/api/command/home', async (req, res) => {
+  if (botConnected) {
+    goToHomeCoordinates();
+    res.json({ success: true, message: "Bot home koordinatına yönlendirildi." });
+  } else {
+    res.status(400).json({ success: false, message: "Bot bağlı değil." });
+  }
+});
+
+app.post('/api/command/eat', async (req, res) => {
+  if (botConnected) {
+    tryEat();
+    res.json({ success: true, message: "Yemek yeme komutu tetiklendi." });
+  } else {
+    res.status(400).json({ success: false, message: "Bot bağlı değil." });
+  }
+});
+
+app.post('/api/command/say', (req, res) => {
+  const { message: msgText } = req.body;
+  if (botConnected && msgText) {
+    bot.chat(msgText);
+    addChatLog('bot_action', null, `Konuştu: "${msgText}"`);
+    res.json({ success: true });
+  } else {
+    res.status(400).json({ success: false });
+  }
+});
+
 app.get('/', (req, res) => {
-  res.send(botConnected ? 'Bot aktif ve çalışıyor.' : 'Bot bağlantı kuruyor...');
+  res.send('<h1>TatliBot Sunucusu Aktif</h1><p>API endpointleri çalışıyor.</p>');
 });
 
 app.listen(port, () => {
   console.log(`[Sunucu] Port ${port} üzerinde çalışıyor.`);
-});
-
-
-// Suppress protocol packet errors
-process.on('uncaughtException', (err) => {
-  if (err.message.includes('Chunk size') || err.message.includes('partial packet')) {
-    // Suppress - protocol desync warnings are normal in some servers
-  } else {
-    console.error('Yakalanamayan Hata:', err);
-  }
 });
