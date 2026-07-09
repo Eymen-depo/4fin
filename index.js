@@ -22,7 +22,7 @@ let lastCommandOrMessageTime = 0;
 const config = {
   debugMode: false,
   aggressiveMode: true, // Agresif mod toggle (true/false)
-  pathfinderEnabled: false,
+  pathfinderEnabled: true,
 
   botAccount: {
     username: "TatliBot",
