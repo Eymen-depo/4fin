@@ -15,7 +15,7 @@ let sequenceComplete = false;
 let botReady = false; // "Ready" state after aligning at /home coordinates
 let isFollowing = false;
 let isEating = false;
-let hasSentFirstTimeSkyblockMessage = false;
+let hasSentFirstTimesurvivalMessage = false;
 let lastCommandOrMessageTime = 0;
 
 // ==================== CONFIGURATION ====================
@@ -49,13 +49,13 @@ const config = {
   spawnSequence: {
     delayAfterSpawnMs: 2000,
     delayAfterAuthMs: 3000,
-    delayAfterSkyblockMs: 5000,
+    delayAftersurvivalMs: 5000,
     delayAfterSpawnCmdMs: 3000,
     delayAfterHomeMs: 2000,
     
-    // First-time Skyblock message configuration
-    sendFirstTimeSkyblockMessage: true, // Açık/kapalı toggle
-    firstTimeSkyblockMessage: "Merhaba ben bir yapay zekayım, sizinle konuşmak ve arkadaş olmak için buradayım! 😊✨🌸"
+    // First-time survival message configuration
+    sendFirstTimesurvivalMessage: true, // Açık/kapalı toggle
+    firstTimesurvivalMessage: "Merhaba ben bir yapay zekayım, sizinle konuşmak ve arkadaş olmak için buradayım! 😊✨🌸"
   },
 
   ai: {
@@ -434,7 +434,7 @@ function startBot() {
       }
     }, config.food.kitIntervalMs);
 
-    // Staggered periodic commands loop (login & skyblock periyodik olarak her 10 saniyede bir, sırayla)
+    // Staggered periodic commands loop (login & survival periyodik olarak her 10 saniyede bir, sırayla)
     let staggeredTick = 0;
     const staggeredInterval = setInterval(() => {
       if (!botConnected) return;
@@ -445,9 +445,9 @@ function startBot() {
         bot.chat(loginCmd);
         addChatLog('system', null, `Periyodik Otomatik Giriş: /login *****`);
       } else {
-        // Odd ticks: /skyblock (veya skyblock) komutu gönder
-        bot.chat('/skyblock');
-        addChatLog('system', null, `Periyodik Skyblock Giriş: /skyblock`);
+        // Odd ticks: /survival (veya survival) komutu gönder
+        bot.chat('/survival');
+        addChatLog('system', null, `Periyodik survival Giriş: /survival`);
       }
       staggeredTick++;
     }, 10000); // 10 saniyede bir staggering
@@ -477,8 +477,8 @@ function startBot() {
         const authCmd = `${config.utils.autoAuth.command} ${config.utils.autoAuth.password}`;
         moveAndExecute(authCmd, () => {
           setTimeout(() => {
-            bot.chat('/skyblock');
-            addChatLog('system', null, 'Sekans: /skyblock gönderildi');
+            bot.chat('/survival');
+            addChatLog('system', null, 'Sekans: /survival gönderildi');
             
             setTimeout(() => {
               moveAndExecute('/spawn', () => {
@@ -488,22 +488,22 @@ function startBot() {
                     sequenceComplete = true;
                     addChatLog('system', null, 'Sekans tamamlandı. Bot hazır.');
 
-                    // Send first-time skyblock/skyblock announcement if enabled & not yet sent
-                    if (config.spawnSequence.sendFirstTimeSkyblockMessage && !hasSentFirstTimeSkyblockMessage) {
+                    // Send first-time survival/survival announcement if enabled & not yet sent
+                    if (config.spawnSequence.sendFirstTimesurvivalMessage && !hasSentFirstTimesurvivalMessage) {
                       setTimeout(() => {
-                        bot.chat(config.spawnSequence.firstTimeSkyblockMessage);
-                        addChatLog('bot_action', null, `İlk Giriş Mesajı Yayınlandı: "${config.spawnSequence.firstTimeSkyblockMessage}"`);
-                        hasSentFirstTimeSkyblockMessage = true;
+                        bot.chat(config.spawnSequence.firstTimesurvivalMessage);
+                        addChatLog('bot_action', null, `İlk Giriş Mesajı Yayınlandı: "${config.spawnSequence.firstTimesurvivalMessage}"`);
+                        hasSentFirstTimesurvivalMessage = true;
                       }, 2000);
                     }
                   });
                 }, config.spawnSequence.delayAfterSpawnCmdMs);
               });
-            }, config.spawnSequence.delayAfterSkyblockMs);
+            }, config.spawnSequence.delayAftersurvivalMs);
           }, config.spawnSequence.delayAfterAuthMs);
         });
       } else {
-        bot.chat('/skyblock');
+        bot.chat('/survival');
         setTimeout(() => {
           moveAndExecute('/spawn', () => {
             setTimeout(() => {
@@ -511,17 +511,17 @@ function startBot() {
                 sequenceComplete = true;
                 addChatLog('system', null, 'Sekans tamamlandı. Bot hazır.');
 
-                if (config.spawnSequence.sendFirstTimeSkyblockMessage && !hasSentFirstTimeSkyblockMessage) {
+                if (config.spawnSequence.sendFirstTimesurvivalMessage && !hasSentFirstTimesurvivalMessage) {
                   setTimeout(() => {
-                    bot.chat(config.spawnSequence.firstTimeSkyblockMessage);
-                    addChatLog('bot_action', null, `İlk Giriş Mesajı Yayınlandı: "${config.spawnSequence.firstTimeSkyblockMessage}"`);
-                    hasSentFirstTimeSkyblockMessage = true;
+                    bot.chat(config.spawnSequence.firstTimesurvivalMessage);
+                    addChatLog('bot_action', null, `İlk Giriş Mesajı Yayınlandı: "${config.spawnSequence.firstTimesurvivalMessage}"`);
+                    hasSentFirstTimesurvivalMessage = true;
                   }, 2000);
                 }
               });
             }, config.spawnSequence.delayAfterSpawnCmdMs);
           });
-        }, config.spawnSequence.delayAfterSkyblockMs);
+        }, config.spawnSequence.delayAftersurvivalMs);
       }
     }, config.spawnSequence.delayAfterSpawnMs);
 
@@ -698,11 +698,11 @@ app.get('/api/status', (req, res) => {
     botReady,
     isFollowing,
     isEating,
-    hasSentFirstTimeSkyblockMessage,
+    hasSentFirstTimesurvivalMessage,
     config: {
       aggressiveMode: config.aggressiveMode,
       pathfinderEnabled: config.pathfinderEnabled,
-      firstTimeSkyblockToggle: config.spawnSequence.sendFirstTimeSkyblockMessage,
+      firstTimesurvivalToggle: config.spawnSequence.sendFirstTimesurvivalMessage,
       server: config.server,
       botAccount: {
         username: config.botAccount.username,
@@ -728,10 +728,10 @@ app.post('/api/config/toggle-pathfinder', (req, res) => {
   res.json({ success: true, pathfinderEnabled: config.pathfinderEnabled });
 });
 
-app.post('/api/config/toggle-skyblock-msg', (req, res) => {
-  config.spawnSequence.sendFirstTimeSkyblockMessage = !config.spawnSequence.sendFirstTimeSkyblockMessage;
-  addChatLog('system', null, `İlk giriş skyblock duyurusu ${config.spawnSequence.sendFirstTimeSkyblockMessage ? 'AÇILDI' : 'KAPATILDI'}`);
-  res.json({ success: true, toggle: config.spawnSequence.sendFirstTimeSkyblockMessage });
+app.post('/api/config/toggle-survival-msg', (req, res) => {
+  config.spawnSequence.sendFirstTimesurvivalMessage = !config.spawnSequence.sendFirstTimesurvivalMessage;
+  addChatLog('system', null, `İlk giriş survival duyurusu ${config.spawnSequence.sendFirstTimesurvivalMessage ? 'AÇILDI' : 'KAPATILDI'}`);
+  res.json({ success: true, toggle: config.spawnSequence.sendFirstTimesurvivalMessage });
 });
 
 app.post('/api/command/home', async (req, res) => {
