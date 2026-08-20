@@ -47,9 +47,9 @@ const config = {
   },
 
   spawnSequence: {
-    delayAfterSpawnMs: 2000,
-    delayAfterAuthMs: 3000,
-    delayAftersurvivalMs: 5000,
+    delayAfterSpawnMs: 5000,
+    delayAfterAuthMs: 5000,
+    delayAftersurvivalMs: 7000,
     delayAfterSpawnCmdMs: 3000,
     delayAfterHomeMs: 2000,
     
